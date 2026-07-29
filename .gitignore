@@ -1,0 +1,17 @@
+venv/
+.venv/
+
+__pycache__/
+*.py[cod]
+
+.env
+
+uploads/*
+outputs/*
+
+!.gitkeep
+
+.vscode/
+.idea/
+
+*.log

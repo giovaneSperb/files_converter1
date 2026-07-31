@@ -18,7 +18,7 @@ from reportlab.platypus import (
     Image as ReportLabImage
 )
 
-from app.utils.formatters import formatar_moeda
+from app.utils.formatters import formatar_moeda, formatar_cpf
 
 
 CAMINHO_LOGO_CAIXA = (
@@ -168,11 +168,33 @@ def criar_caixa(
     return tabela
 
 
+def _formatar_conta_salario(
+    pagamento
+):
+    # formato: agencia/tipo_conta/conta-digito
+    agencia = pagamento.get("agencia_favorecido", "")
+    tipo_conta = pagamento.get("tipo_conta_favorecido", "")
+    conta = pagamento.get("conta_favorecido", "")
+    digito = pagamento.get("digito_conta_favorecido", "")
+
+    resultado = f"{agencia}/{tipo_conta}/{conta}"
+
+    if digito:
+
+        resultado = f"{resultado}-{digito}"
+
+    return resultado
+
+
 def obter_tipo_transferencia(
     pagamento
 ):
 
     if pagamento.get("banco_favorecido", "").strip() == "104":
+
+        if pagamento.get("tipo_compromisso", "").strip() == "0002":
+
+            return "SALARIO"
 
         return "TEV"
 
@@ -189,6 +211,9 @@ def criar_comprovante(
     tipo_transferencia = obter_tipo_transferencia(
         pagamento
     )
+
+    # TEV é o tipo exibido no título tanto para TEV quanto para SALARIO
+    titulo_tipo = "TEV" if tipo_transferencia == "SALARIO" else tipo_transferencia
 
     # ==================================================
     # CABEÇALHO
@@ -218,7 +243,7 @@ def criar_comprovante(
             (
                 "Comprovante de Transferência "
                 "entre contas da CAIXA - "
-                f"{tipo_transferencia}"
+                f"{titulo_tipo}"
             ),
             estilos["titulo_caixa"]
         )
@@ -252,43 +277,69 @@ def criar_comprovante(
     # DADOS DO EMITENTE
     # ==================================================
 
-    dados_emitente = [
+    if tipo_transferencia == "SALARIO":
 
-        criar_linha(
-            "Nome do remetente:",
-            "PORTAL ADMINISTRACAO DE IMOVEI",
-            estilos
-        ),
+        dados_emitente = [
 
-        criar_linha(
-            "CNPJ/CPF:",
-            "94.698.313/0001-09",
-            estilos
-        ),
-
-        criar_linha(
-            "Tipo de pessoa:",
-            "Jurídica",
-            estilos
-        ),
-
-        criar_linha(
-            "Conta de origem:",
-            "6352.003.00028883-2",
-            estilos
-        )
-
-    ]
-
-    if tipo_transferencia == "TED":
-
-        dados_emitente.append(
             criar_linha(
-                "Tipo de conta:",
-                "03 - Conta pessoa juridica",
+                "Nome do pagador:",
+                "PORTAL ADMINISTRACAO DE IMOVEI",
+                estilos
+            ),
+
+            criar_linha(
+                "CNPJ:",
+                "94.698.313/0001-09",
+                estilos
+            ),
+
+            criar_linha(
+                "Conta debitada:",
+                "6352.003.00028883-2",
                 estilos
             )
-        )
+
+        ]
+
+    else:
+
+        dados_emitente = [
+
+            criar_linha(
+                "Nome do remetente:",
+                "PORTAL ADMINISTRACAO DE IMOVEI",
+                estilos
+            ),
+
+            criar_linha(
+                "CNPJ/CPF:",
+                "94.698.313/0001-09",
+                estilos
+            ),
+
+            criar_linha(
+                "Tipo de pessoa:",
+                "Jurídica",
+                estilos
+            ),
+
+            criar_linha(
+                "Conta de origem:",
+                "6352.003.00028883-2",
+                estilos
+            )
+
+        ]
+
+        if tipo_transferencia == "TED":
+
+            dados_emitente.append(
+                criar_linha(
+                    "Tipo de conta:",
+                    "03 - Conta pessoa juridica",
+                    estilos
+                )
+            )
 
     emitente = criar_caixa(
         dados_emitente,
@@ -310,15 +361,17 @@ def criar_comprovante(
     # DADOS DO CONVÊNIO
     # ==================================================
 
-    if tipo_transferencia == "TED":
+    if tipo_transferencia in ("TED", "SALARIO"):
 
         dados_convenio = pagamento.copy()
 
         descricoes_tipo_compromisso = {
-            "0001": "Pagamento a Fornecedor"
+            "0001": "Pagamento a Fornecedor",
+            "0002": "Pagamento de Salários"
         }
 
         descricoes_compromisso = {
+            "0002": "Pagamento de Salários",
             "0003": "Pagamento a Fornecedor"
         }
 
@@ -533,6 +586,46 @@ def criar_comprovante(
 
         ]
 
+    elif tipo_transferencia == "SALARIO":
+
+        dados_destinatario = [
+
+            criar_linha(
+                "Nome do favorecido(a):",
+                pagamento.get(
+                    "nome",
+                    ""
+                ),
+                estilos
+            ),
+
+            criar_linha(
+                "CPF do favorecido(a):",
+                formatar_cpf(
+                    pagamento.get(
+                        "cpf_cnpj",
+                        ""
+                    )
+                ),
+                estilos
+            ),
+
+            criar_linha(
+                "Forma de pagamento:",
+                "TEV - Transferência entre contas Caixa",
+                estilos
+            ),
+
+            criar_linha(
+                "Conta destino:",
+                _formatar_conta_salario(
+                    pagamento
+                ),
+                estilos
+            )
+
+        ]
+
     else:
 
         dados_destinatario = [
@@ -712,6 +805,23 @@ def criar_comprovante(
     return elementos
 
 
+def _desenhar_numero_pagina(canvas, doc):
+
+    canvas.saveState()
+
+    canvas.setFont("Helvetica", 8)
+
+    largura, _ = A4
+
+    canvas.drawCentredString(
+        largura / 2,
+        8 * mm,
+        str(canvas.getPageNumber())
+    )
+
+    canvas.restoreState()
+
+
 def gerar_pdf_pagamentos(
     pagamentos,
     caminho_pdf
@@ -789,5 +899,7 @@ def gerar_pdf_pagamentos(
             )
 
     documento.build(
-        elementos
+        elementos,
+        onFirstPage=_desenhar_numero_pagina,
+        onLaterPages=_desenhar_numero_pagina
     )
